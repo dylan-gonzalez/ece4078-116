@@ -186,9 +186,9 @@ def get_robot_pose(args,script_dir):
         scale /= 2
     baseline = np.loadtxt("{}baseline.txt".format(datadir) , delimiter=',')
     robot = Robot(baseline, scale, camera_matrix, dist_coeffs)
-    slam = EKF.init_ekf(datadir, ip_)
+    slam = EKF(robot)
     # update the robot pose [x,y,theta]
-    robot_pose_act = slam.robot.state # replace with your calculation
+    robot_pose_act = slam.robot.state.tolist() # replace with your calculation
 
     #return robot_pose_act
     
@@ -204,14 +204,20 @@ def get_robot_pose(args,script_dir):
         input_image = cv2.imread(image_path)
         # cv2.imshow('bbox', bbox_img)
         # cv2.waitKey(0)
-        robot_pose_cam = image_poses[image_path]
+        robot_pose_cam = np.transpose(image_poses[image_path]).tolist()
+        
         
     weight_pose1 = 0.7
     weight_pose2 = 0.3
-
+    
+    print(f'robot_pose_act: {robot_pose_act}')
+    print(f'robot_pose_cam: {robot_pose_cam}')
 # Perform weighted fusion of poses
-    robot_pose = (weight_pose1 * robot_pose_act) + (weight_pose2 * robot_pose_cam)
-
+    robot_pose = [[],[],[]]
+    
+    robot_pose[0] = weight_pose1*robot_pose_act[0][0] + weight_pose2*robot_pose_cam[0][0]
+    robot_pose[1] = weight_pose1*robot_pose_act[1][0] + weight_pose2*robot_pose_cam[0][1]
+    robot_pose[2] = weight_pose1*robot_pose_act[2][0] + weight_pose2*robot_pose_cam[0][2]
     ###############################################################
 
     return robot_pose
@@ -323,7 +329,7 @@ def isInWindow(pos, winx, winy, width, height):
 
 
 class Graph:
-''' Define graph '''
+    ''' Define graph '''
     def __init__(self, startpos, endpos):
         self.startpos = startpos
         self.endpos = endpos
@@ -525,6 +531,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Fruit searching")
     parser.add_argument("--map", type=str, default='M4_true_map_full.txt') # change to 'M4_true_map_part.txt' for lv2&3
     parser.add_argument("--ip", metavar='', type=str, default='192.168.50.1')
+    parser.add_argument("--calib_dir", type=str, default="calibration/param/")
     parser.add_argument("--port", metavar='', type=int, default=8080)
     args, _ = parser.parse_known_args()
 
@@ -535,46 +542,47 @@ if __name__ == "__main__":
     search_list = read_search_list() #inputted ordered list of fruits to search 
     print_target_fruits_pos(search_list, fruits_list, fruits_true_pos)
 
-    waypoint = [0.0,0.0]
-    robot_pose = [0.0,0.0,0.0]
+    #waypoint = [0.0,0.0]
 
     # estimate the robot's pose
-    robot_pose = get_robot_pose(args,os.path.dirname(os.path.abspath(__file__)))
+    #robot_pose = get_robot_pose(args,os.path.dirname(os.path.abspath(__file__)))
 
     # ---- We won't need the skeleton code below ----# 
     # ---- Use RRT* + Djikstra's instead ----#
-    startpos = (0., 0.)
-    # estimate the robot's pose
-    robot_pose = get_robot_pose(args)
+    obstacles = fruits_true_pos.tolist() + aruco_true_pos.tolist()
+    print(f'obstacles: {obstacles}')
 
-    end_target = search_list[-1]
-    for target in fruits_true_pos:
-        if target[0] == end_target:
-            endpos = target[1]
-            break
-
-    #obstacles = fruits and markers
-    obstacles = np.concatenate(fruits_true_pos, aruco_true_pos)
-
-    n_iter = 200
-    radius = 0.5
+    n_iter = 500
+    radius = 0.05
     stepSize = 0.7
+    
+    print(f'Entering fruit path planning loop')
+    startpos = (0,0)
+    endpos = (fruits_true_pos[0][0], fruits_true_pos[0][1])
+    for i in range(0, len(fruits_true_pos)):
+        G = RRT_star(startpos, endpos, obstacles, n_iter, radius, stepSize)
+        
+        print(f'G: {G.success}')
+        if G.success:
+            path = dijkstra(G)
+            print(f'Path: {path}')
+            plot(G, obstacles, radius, path)
+        else:
+            plot(G, obstacles, radius)
 
-    G = RRT_star(startpos, endpos, obstacles, n_iter, radius, stepSize)
-    # G = RRT(startpos, endpos, obstacles, n_iter, radius, stepSize)
-
-    if G.success:
-        path = dijkstra(G)
-        print(path)
-        plot(G, obstacles, radius, path)
-    else:
-        plot(G, obstacles, radius)
-
-   for point in path:
-       robot_pose = get_robot_pose()
-       if np.linalg.norm(robot_pose, endpos) <= radius:
-           break
-
-       drive_to_point(point, robot_pose)
-       print("Finished driving to waypoint: {}; New robot pose: {}".format(waypoint,robot_pose))
-       ppi.set_velocity([0,0])
+        print(f'Starting path traversal with robot!')
+        for point in path:
+            robot_pose = get_robot_pose(args,os.path.dirname(os.path.abspath(__file__)))
+            print(f'robot_pose: {robot_pose}')
+            robot_pose_2d = [robot_pose[0], robot_pose[1]]
+            #if np.linalg.norm(robot_pose_2d, endpos) <= radius:
+             #   break
+            if (robot_pose_2d - [endpos[0],endpos[1]]) <= radius:
+                break
+            drive_to_point(point, robot_pose)
+            print("Finished driving to waypoint: {}; New robot pose: {}".format(point,robot_pose_2d))
+            #ppi.set_velocity([0,0])
+        
+        #reset startpos and endpos for next iteration
+        startpos = robot_pose
+        endpos = fruits_true_pos[i+1]
