@@ -827,52 +827,66 @@ if __name__ == "__main__":
 
 
     #***************************Astar Implementation*****************************************************
-    #Generate obstacles list
-
-    obstacles = [] 
+    obstacles = []
     for x,y in fruits_true_pos:
-        obstacles.append([x,y])
+    obstacles.append([x,y])
 
     for x,y in aruco_true_pos:
         obstacles.append([x,y])
-        
+
     #Generate occupancy grid
     width = 3 #m
     height = 3 #m
     n_cells_y = 20
     n_cells_x = 20
-    matrix = []
-    for i in range(n_cells_y):
-        matrix.append([])
-        for j in range(n_cells_x):
-            #check if cell is occupied by an obstacle
-            for o_x, o_y in obstacles:
-                o_x = round(o_x, 2)
-                o_y = round(o_y, 2)
-                if width/n_cells_x * j <= o_x and o_x <= width/n_cells_x * (j+1):
-                    if height/n_cells_y * i <= o_y and o_y <= height/n_cells_y * (i+1):
-                        matrix[i].append(0)
-                    else: 
-                        matrix[i].append(1)
+    matrix = [[1 for _ in range(n_cells_y)] for _ in range(n_cells_x)] #preallocate
+
+    def convert_to_grid_space(x,y):
+        # Convert real-world coordinates to grid coordinates
+        x_grid = int(((x + width/2) / width) * (n_cells_x- 1))
+        y_grid = int(((y + height/2) / height) * (n_cells_y - 1))
+
+        if 0 <= x_grid < n_cells_x and 0 <= y_grid < n_cells_y:
+        
+            # Mark the corresponding grid cell as an obstacle (e.g., set it to 1)
+            #matrix[y_grid][x_grid] = 1
+            return x_grid, y_grid
+
+    print("adding obstacles")
+    for x,y in obstacles:
+        x_grid, y_grid = convert_to_grid_space(x,y)
+
+        matrix[y_grid][x_grid] = 0
+
+    for row in matrix:
+        print(row)
 
     grid = Grid(matrix=matrix)
 
-    start = grid.node(0,0)
+    start_x, start_y = convert_to_grid_space(0,0)
+    start = grid.node(start_x, start_y)
 
-    for idx in search_list:
+    search_list = read_search_list()
+    for idx in range(len(search_list)):
         print(f'Going to fruit {search_list[idx]}')
         
-        end = grid.node(fruits_true_pos[idx][0], fruits_true_pos[idx][1])
+        x_grid, y_grid = convert_to_grid_space(fruits_true_pos[idx][0] + 0.3, fruits_true_pos[idx][1] + 0.3)
+        end = grid.node(x_grid, y_grid)
+        print(f'Start: {start}')
+        print(f'End {end}')
 
         finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
         path, runs = finder.find_path(start, end, grid)
 
+        #-----implement drive to point code----
+
+        ######################################
+
+
+
         print('operations:', runs, 'path length:', len(path))
         print(grid.grid_str(path=path, start=start, end=end))
+        start = grid.node(x_grid, y_grid)
+        grid.cleanup()
 
-        
-
-
-
-    
 sys.exit()
