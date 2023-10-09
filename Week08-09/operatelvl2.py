@@ -280,10 +280,7 @@ class Operate:
         lv,rv = 0.0, 0.0
         
         if not motion == [0,0]:
-            if motion[0] == 0:  # Turn
-                lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
-            else:   # Drive forward
-                lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
+            lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
             
             # A good place to add the obstacle detection algorithm
             
@@ -812,7 +809,6 @@ if __name__ == "__main__":
             wp = path[i]
             print(f'Current wp: {wp}')
             robot_pose = operate.get_robot_pose()
-            robot_pose = np.array([robot_pose[0], robot_pose[1], robot_pose[2]])
             print("Robot Pose:", robot_pose)
             operate.drive_to_waypoint(wp, robot_pose)
         
