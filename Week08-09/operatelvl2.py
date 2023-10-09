@@ -30,6 +30,11 @@ import slam.aruco_detector as aruco
 # import YOLO components 
 #from YOLO.detector import Detector
 
+from pathfinding.core.diagonal_movement import DiagonalMovement
+from pathfinding.core.grid import Grid
+from pathfinding.finder.a_star import AStarFinder
+
+
 
 class Operate:
     def __init__(self, args):
@@ -794,13 +799,13 @@ if __name__ == "__main__":
             print('SLAM is paused')
     ###########################################
 
-
+    #*********************RRT Implementation**********************************************************
+    '''
     ################Generate Paths####################
-    paths = operate.generate_paths(fruits_true_pos, aruco_true_pos, search_list)
-    print(f'--------------Final path is {paths}') 
+    #paths = operate.generate_paths(fruits_true_pos, aruco_true_pos, search_list)
+    #print(f'--------------Final path is {paths}') 
     ###########################################
 
-    
     ############Drive Robot######################
     for path in paths:
         #ignore the starting point (duplicates)
@@ -816,5 +821,56 @@ if __name__ == "__main__":
         print("Initiating the Delay of 2 seconds")
         operate.motion_controller([0,0],0.0,2)
     ###########################################
+    '''
 
+
+    #***************************Astar Implementation*****************************************************
+    #Generate obstacles list
+
+    obstacles = [] 
+    for x,y in fruits_true_pos:
+        obstacles.append([x,y])
+
+    for x,y in aruco_true_pos:
+        obstacles.append([x,y])
+        
+    #Generate occupancy grid
+    width = 3 #m
+    height = 3 #m
+    n_cells_y = 20
+    n_cells_x = 20
+    matrix = []
+    for i in range(n_cells_y):
+        matrix.append([])
+        for j in range(n_cells_x):
+            #check if cell is occupied by an obstacle
+            for o_x, o_y in obstacles:
+                o_x = round(o_x, 2)
+                o_y = round(o_y, 2)
+                if width/n_cells_x * j <= o_x and o_x <= width/n_cells_x * (j+1):
+                    if height/n_cells_y * i <= o_y and o_y <= height/n_cells_y * (i+1):
+                        matrix[i].append(0)
+                    else: 
+                        matrix[i].append(1)
+
+    grid = Grid(matrix=matrix)
+
+    start = grid.node(0,0)
+
+    for idx in search_list:
+        print(f'Going to fruit {search_list[idx]}')
+        
+        end = grid.node(fruits_true_pos[idx][0], fruits_true_pos[idx][1])
+
+        finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
+        path, runs = finder.find_path(start, end, grid)
+
+        print('operations:', runs, 'path length:', len(path))
+        print(grid.grid_str(path=path, start=start, end=end))
+
+        
+
+
+
+    
 sys.exit()
