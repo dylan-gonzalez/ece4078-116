@@ -94,6 +94,10 @@ class EKF:
         # TODO: add your codes here to compute the predicted x
         Q = self.predict_covariance(raw_drive_meas)
         self.P = F @ self.P @ F.T + Q
+        A = self.state_transition(raw_drive_meas)
+        K_1 = self.P
+        K_uncertainity = A @ K_1 @ A.T 
+        K_uncertainity += Q 
 
     def add_landmarks(self, measurements):
         if not measurements:
