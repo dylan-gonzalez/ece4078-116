@@ -30,6 +30,11 @@ import slam.aruco_detector as aruco
 # import YOLO components 
 #from YOLO.detector import Detector
 
+from pathfinding.core.diagonal_movement import DiagonalMovement
+from pathfinding.core.grid import Grid
+from pathfinding.finder.a_star import AStarFinder
+
+
 
 class Operate:
     def __init__(self, args):
@@ -279,15 +284,21 @@ class Operate:
     def motion_controller(self, motion, wheel_ticks, drive_time):
         lv,rv = 0.0, 0.0       
         
-        lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
-
-        # Run SLAM Update Sequence
-        operate.take_pic()
-        drive_meas = measure.Drive(lv,rv,drive_time)
-        operate.update_slam(drive_meas)
-        #operate.record_data()
-        #operate.save_image()
-        #operate.detect_target()
+        if not motion == [0,0]:
+            if motion[0] == 0:  # Turn
+                lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
+            else:   # Drive forward
+                lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
+            
+            # A good place to add the obstacle detection algorithm
+            
+            # Run SLAM Update Sequence
+            operate.take_pic()
+            drive_meas = measure.Drive(lv,rv,drive_time)
+            operate.update_slam(drive_meas)
+            #operate.record_data()
+            #operate.save_image()
+            #operate.detect_target()
         
              
         
@@ -793,13 +804,13 @@ if __name__ == "__main__":
             print('SLAM is paused')
     ###########################################
 
-
+    #*********************RRT Implementation**********************************************************
+    '''
     ################Generate Paths####################
-    paths = operate.generate_paths(fruits_true_pos, aruco_true_pos, search_list)
-    print(f'--------------Final path is {paths}') 
+    #paths = operate.generate_paths(fruits_true_pos, aruco_true_pos, search_list)
+    #print(f'--------------Final path is {paths}') 
     ###########################################
 
-    
     ############Drive Robot######################
     for path in paths:
         #ignore the starting point (duplicates)
@@ -808,7 +819,6 @@ if __name__ == "__main__":
             wp = path[i]
             print(f'Current wp: {wp}')
             robot_pose = operate.get_robot_pose()
-            robot_pose = np.array(robot_pose[0], robot_pose[1], robot_pose[2])
             print("Robot Pose:", robot_pose)
             operate.drive_to_waypoint(wp, robot_pose)
         
@@ -816,5 +826,70 @@ if __name__ == "__main__":
         print("Initiating the Delay of 2 seconds")
         operate.motion_controller([0,0],0.0,2)
     ###########################################
+    '''
+
+
+    #***************************Astar Implementation*****************************************************
+    obstacles = []
+    for x,y in fruits_true_pos:
+    obstacles.append([x,y])
+
+    for x,y in aruco_true_pos:
+        obstacles.append([x,y])
+
+    #Generate occupancy grid
+    width = 3 #m
+    height = 3 #m
+    n_cells_y = 20
+    n_cells_x = 20
+    matrix = [[1 for _ in range(n_cells_y)] for _ in range(n_cells_x)] #preallocate
+
+    def convert_to_grid_space(x,y):
+        # Convert real-world coordinates to grid coordinates
+        x_grid = int(((x + width/2) / width) * (n_cells_x- 1))
+        y_grid = int(((y + height/2) / height) * (n_cells_y - 1))
+
+        if 0 <= x_grid < n_cells_x and 0 <= y_grid < n_cells_y:
+        
+            # Mark the corresponding grid cell as an obstacle (e.g., set it to 1)
+            #matrix[y_grid][x_grid] = 1
+            return x_grid, y_grid
+
+    print("adding obstacles")
+    for x,y in obstacles:
+        x_grid, y_grid = convert_to_grid_space(x,y)
+
+        matrix[y_grid][x_grid] = 0
+
+    for row in matrix:
+        print(row)
+
+    grid = Grid(matrix=matrix)
+
+    start_x, start_y = convert_to_grid_space(0,0)
+    start = grid.node(start_x, start_y)
+
+    search_list = read_search_list()
+    for idx in range(len(search_list)):
+        print(f'Going to fruit {search_list[idx]}')
+        
+        x_grid, y_grid = convert_to_grid_space(fruits_true_pos[idx][0] + 0.3, fruits_true_pos[idx][1] + 0.3)
+        end = grid.node(x_grid, y_grid)
+        print(f'Start: {start}')
+        print(f'End {end}')
+
+        finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
+        path, runs = finder.find_path(start, end, grid)
+
+        #-----implement drive to point code----
+
+        ######################################
+
+
+
+        print('operations:', runs, 'path length:', len(path))
+        print(grid.grid_str(path=path, start=start, end=end))
+        start = grid.node(x_grid, y_grid)
+        grid.cleanup()
 
 sys.exit()
