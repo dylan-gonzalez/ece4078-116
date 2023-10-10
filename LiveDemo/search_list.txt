@@ -1,5 +1,0 @@
-lemon
-lime
-pumpkin
-potato
-capsicum
