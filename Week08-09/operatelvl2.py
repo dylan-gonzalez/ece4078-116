@@ -277,23 +277,17 @@ class Operate:
         
         
     def motion_controller(self, motion, wheel_ticks, drive_time):
-        lv,rv = 0.0, 0.0
+        lv,rv = 0.0, 0.0       
         
-        if not motion == [0,0]:
-            if motion[0] == 0:  # Turn
-                lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
-            else:   # Drive forward
-                lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
-            
-            # A good place to add the obstacle detection algorithm
-            
-            # Run SLAM Update Sequence
-            operate.take_pic()
-            drive_meas = measure.Drive(lv,rv,drive_time)
-            operate.update_slam(drive_meas)
-            #operate.record_data()
-            #operate.save_image()
-            #operate.detect_target()
+        lv, rv = ppi.set_velocity(motion, tick=wheel_ticks, time=drive_time)
+
+        # Run SLAM Update Sequence
+        operate.take_pic()
+        drive_meas = measure.Drive(lv,rv,drive_time)
+        operate.update_slam(drive_meas)
+        #operate.record_data()
+        #operate.save_image()
+        #operate.detect_target()
         
              
         
