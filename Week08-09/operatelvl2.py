@@ -20,6 +20,7 @@ import util.DatasetHandler as dh    # save/load functions
 import util.measure as measure      # measurements
 import pygame                       # python package for GUI
 import shutil                       # python package for file operations
+import pathfinding
 
 # import SLAM components you developed in M2
 sys.path.insert(0, "{}/slam".format(os.getcwd()))
@@ -832,7 +833,7 @@ if __name__ == "__main__":
     #***************************Astar Implementation*****************************************************
     obstacles = []
     for x,y in fruits_true_pos:
-    obstacles.append([x,y])
+        obstacles.append([x,y])
 
     for x,y in aruco_true_pos:
         obstacles.append([x,y])
@@ -869,7 +870,7 @@ if __name__ == "__main__":
     start_x, start_y = convert_to_grid_space(0,0)
     start = grid.node(start_x, start_y)
 
-    search_list = read_search_list()
+    search_list = operate.read_search_list()
     for idx in range(len(search_list)):
         print(f'Going to fruit {search_list[idx]}')
         
