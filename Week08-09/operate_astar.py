@@ -7,12 +7,10 @@ import cv2
 import numpy as np
 import math
 import json
-import copy
+from typing import Tuple, List
 
-#from RRT import *
-from rrt2 import *
-from Obstacle import *
-#from a_star import AStarPlanner
+
+
 # import utility functions
 sys.path.insert(0, "{}/util".format(os.getcwd()))
 from util.pibot import PenguinPi    # access the robot
@@ -28,14 +26,12 @@ from slam.ekf import EKF
 from slam.robot import Robot
 import slam.aruco_detector as aruco
 
-# import YOLO components 
-#from YOLO.detector import Detector
-
+# A* components
 from pathfinding.core.diagonal_movement import DiagonalMovement
 from pathfinding.core.grid import Grid
 from pathfinding.finder.a_star import AStarFinder
 
-
+from a_star import astar_pathfinding_complete
 
 class Operate:
     def __init__(self, args):
@@ -84,15 +80,7 @@ class Operate:
         self.img = np.zeros([240, 320, 3], dtype=np.uint8)
         self.aruco_img = np.zeros([240, 320, 3], dtype=np.uint8)
         #self.detector_output = np.zeros([240, 320], dtype=np.uint8)
-        """
-        if args.yolo_model == "":
-            self.detector = None
-            self.yolo_vis = cv2.imread('pics/8bit/detector_splash.png')
-        else:
-            self.detector = Detector(args.yolo_model)
-            self.yolo_vis = np.ones((240, 320, 3)) * 100
-        self.bg = pygame.image.load('pics/gui_mask.jpg')
-        """
+
     def get_robot_pose(self):
         states = self.ekf.get_state_vector()
         #print(f"robot pose: {states}")
@@ -171,33 +159,8 @@ class Operate:
                                                     fruit,
                                                     np.round(fruit_true_pos[i][0], 1),
                                                     np.round(fruit_true_pos[i][1], 1)))
-            n_fruit += 1
-
-    '''
-    # wheel control
-    def control(self):
-        if args.play_data:
-            lv, rv = self.pibot.set_velocity()
-        else:
-            lv, rv = self.pibot.set_velocity(
-                self.command['motion'])
-        if self.data is not None:
-            self.data.write_keyboard(lv, rv)
-        dt = time.time() - self.control_clock
-        # running in sim
-        if args.ip == 'localhost':
-            drive_meas = measure.Drive(lv, rv, dt)
-        # running on physical robot (right wheel reversed)
-        else:
-            drive_meas = measure.Drive(lv, -rv, dt)
-        self.control_clock = time.time()
-        return drive_meas
-    '''
-    
-    
-    
-    
-    
+            n_fruit += 1    
+     
     
     
     
@@ -297,104 +260,7 @@ class Operate:
             operate.take_pic()
             drive_meas = measure.Drive(lv,rv,drive_time)
             operate.update_slam(drive_meas)
-            #operate.record_data()
-            #operate.save_image()
-            #operate.detect_target()
         
-             
-        
-    '''
-    def drive_to_point(self, waypoint, robot_pose, args):
-        print(f"Current pose: {robot_pose}")
-        #import camera and baseline calibration parameters
-        #fileS = "calibration/param/scale.txt"
-        #scale = np.loadtxt(fileS, delimiter='')
-        datadir,ip_ = args.calib_dir, args.ip
-        
-        scale = np.loadtxt("{}scale.txt".format(datadir), delimiter=',')
-        
-        #fileB = "calibration/param/baseline.txt"
-        baseline = np.loadtxt("{}baseline.txt".format(datadir), delimiter=',')
-
-        # Wheel speed in tick
-        wheel_vel = 30  # tick   
-        # Find wheel speed in m/s
-        left_wheel_speed = wheel_vel * scale
-        right_wheel_speed = wheel_vel * scale
-        
-        # Linear and Angular velocity
-        linear_velocity = (right_wheel_speed + left_wheel_speed) / 2.0 # instead of using wheel_vel use linear_vel      
-        #angular_velocity = (right_wheel_speed + left_wheel_speed) / baseline
-        
-        #print(f'linear vel: {linear_velocity}, angular vel: {angular_velocity}')
-        
-        # Determine the angle the robot needs to turn to face waypoint
-        #current_angle = robot_pose[2][0]
-        current_angle = robot_pose[2]
-        target_angle = math.atan2(waypoint[1] - robot_pose[1], waypoint[0] - robot_pose[0])
-        angle_to_turn = target_angle - current_angle
-
-        print(f'Current angle: {current_angle}, Target angle: {target_angle}, angle to turn: {angle_to_turn}')
-        
-        # Ensure the turn angle is within the range of -π to π (or -180 degrees to 180 degrees)
-        if angle_to_turn >= math.pi:
-            angle_to_turn -= 2 * math.pi
-            #self.command[0,-1]
-        elif angle_to_turn < -math.pi:
-            angle_to_turn += 2 * math.pi
-            #self.command[0,1]
-
-        operate.control_clock=time.time()
-        #turn_time = abs(angle_to_turn / (2*np.pi * baseline))
-        #turn_time = abs(angle_to_turn / (np.pi / 4))
-        turn_time = abs(baseline*angle_to_turn*0.5) / (scale*wheel_vel)
-        
-        #print("Turning for {:.2f} seconds".format(turn_time))
-        print(f'turning for {turn_time}')
-        #ppi.set_velocity([0, 1], turning_tick=wheel_vel, time=turn_time)
-        self.command['motion'] = [0, 1]        
-        turn_time += time.time()
-        while time.time() <= turn_time:
-            #print("turning...")
-            #self.take_pic()
-            drive_meas = self.control()
-            self.update_slam(drive_meas)
-            #self.record_data()
-            #self.save_image()
-            
-        
-        # Drive straight to the waypoint
-        #distance_to_waypoint = math.sqrt((waypoint[0] - robot_pose[0][0])**2 + (waypoint[1] - robot_pose[1][0])**2)
-        distance_to_waypoint = math.sqrt((waypoint[0] - robot_pose[0])**2 + (waypoint[1] - robot_pose[1])**2)
-
-        print(linear_velocity)
-        #drive_time = abs((distance_to_waypoint) / wheel_vel) # could minus 0.5m from waypoint to get to radius of 0.5
-        
-        drive_time = abs((distance_to_waypoint) / (wheel_vel*scale))
-        
-        print(f'Distance to drive: {distance_to_waypoint}')
-
-
-        print("Driving for {:.2f} seconds".format(drive_time))
-        #ppi.set_velocity([1, 0], tick=wheel_vel, time=drive_time)
-        self.command['motion'] = [1,0]
-        
-        drive_time += time.time()
-        while time.time() <= drive_time:
-            #self.take_pic()
-            drive_meas = self.control()
-            self.update_slam(drive_meas)
-            #self.record_data()
-            #self.save_image()
-            #print("---------------------------")
-            #print(self.get_robot_pose())
-            #print("----------------------------")
-            
-        self.command['motion'] = [0,0]
-        self.control()
-        time.sleep(2)
-        print("Arrived at [{}, {}]\n".format(waypoint[0], waypoint[1]))
-    '''
     
     # camera control
     def take_pic(self):
@@ -602,158 +468,59 @@ class Operate:
             pygame.quit()
             sys.exit()
 
-
-    def generate_paths(self, fruits_list, aruco_list, search_list):
-        #getting index of fruits to be searched
-        #fruit_list_dict = dict(zip(self.fruit_list,range(len(self.fruit_list))))
-        #all_fruits = [x for x in range(len(self.fruit_list))]
-        #search_fruits = [fruit_list_dict[x] for x in self.search_list]
-        #other_fruits = list((set(all_fruits) | set(search_fruits)) - (set(all_fruits) & set(search_fruits)))
-
-        #adding markers as obstacles
-        obstacles = []
-        #for x,y in self.aruco_true_pos:
-        for x,y in aruco_list:
-            obstacles.append([x + 1.5, y + 1.5])
-
-        #adding other fruits as obstacles
-        for x,y in fruits_list:
-            #x,y = self.fruit_true_pos[idx]
-            
-            obstacles.append([x + 1.5, y + 1.5])
-
-        #printing search fruits location
-        for idx in range(len(search_list)):
-            print(f' {search_list[idx]} at {fruits_list[idx]}')
-
-        radius = 0.25
-        radius_success = False
-        while not radius_success:
-            try:
-                all_obstacles = generate_path_obstacles(obstacles, radius) #generating obstacles
-
-                #starting robot pose and empty paths
-                start = np.array([0,0]) + 1.5
-                paths = []
-                print("New path generated")
+    def indices_to_coordinates(x, y, grid_size, map_size=3):
+        """
+        Convert grid indices to real world coordinates.
+        The center of the grid is mapped to the origin (0,0) in real world coordinates.
+        """
+        grid_center = grid_size // 2  
+        scale = map_size / grid_size  
+        return (y - grid_center) * scale, (x - grid_center) * scale
 
 
-                for idx in range(len(search_list)):
-                    success = False
-                    method = 1
-                    linear_offset = 0.3
-                    while not success:
-                        location = copy.deepcopy(fruits_list[idx])
-                        print(f'Location: {location}')
-                        if method == 1:
-                            offset = 0.2
-                            # Stop in front of fruit
-                            if location[0] > 0 and location[1] > 0:
-                                location -= [offset, offset]
-                            elif location[0] > 0 and location[1] < 0:
-                                location -= [offset, -offset]
-                            elif location[0] < 0 and location[1] > 0:
-                                location -= [-offset, offset]
-                            else:
-                                location += [offset, offset]
-                        elif method == 2:
-                            if location[1] > 0:
-                                location -= [0, linear_offset]
-                            else:
-                                location += [0, linear_offset]
-                        elif method == 3:
-                            if location[0] > 0:
-                                location -= [linear_offset,0]
-                            else:
-                                location += [linear_offset,0]
-                        elif method == 4:
-                            if location[1] > 0:
-                                location += [0, linear_offset]
-                            else:
-                                location -= [0, linear_offset]
-                        elif method == 5:
-                            if location[0] > 0:
-                                location += [linear_offset,0]
-                            else:
-                                location -= [linear_offset,0]
-                        else:
-                            break
+    def navigate_to_fruits_fixed_grid(robot_pose: Tuple[float, float], 
+                                    grid: List[List[int]], 
+                                    targets: List[Tuple[float, float]], 
+                                    stop_distance: float,
+                                    heuristic_function) -> None:
+        """
+        Navigate through multiple waypoints to reach target fruits using A* pathfinding.
 
-                        goal = np.array(location) + 1.5
-
-                        try:
-                            rrtc = RRT(start=start, goal=goal, width=3, height=3, obstacle_list=all_obstacles,
-                                expand_dis=1, path_resolution=0.1)
-                            path = rrtc.planning()[::-1] #reverse path
-                            success = True
-                            print("Success!")
-                        except:
-                            print(f"{self.fruit_list[idx]} Failed")
-                            method += 1
-
-                    print("printing path")
-                    #printing path
-                    for i in range(len(path)):
-                        x, y = path[i]
-                        path[i] = [x - 1.5, y - 1.5]
-                    print(f'The path is {path}')
-
-                    #adding paths
-                    paths.append(path)
-                    start = np.array(goal)
-                self.paths = paths
-                radius_success = True
-            except:
-                #self.radius -= 0.05
-                radius -= 0.05
-                print(f"Radius reduced to {radius}")
-                
-        return paths
-'''
-    def path_planning(self,search_order):
-        fileB = "calibration/param/baseline.txt"
-        robot_radius = np.loadtxt(fileB, delimiter=',')*2 # robot radius = baseline of the robot/2.0
-        robot_radius = 0.2
-        robot_pose = operate.get_robot_pose() # estimate the robot's pose
-        print("Search order is:", search_order)
-        sx,sy = float(robot_pose[0]),float(robot_pose[1]) # starting location
-        # gx,gy = fruits_true_pos[search_order][0],fruits_true_pos[search_order][1] # goal position
-
-        for i in range(3): # to get the correct fruit idx based on the search list
-            if search_list[search_order] == fruits_list[i]:
-                gx,gy = fruits_true_pos[i][0],fruits_true_pos[i][1] # goal position
-
-        print("starting loation is: ",sx,",",sy)
-        print("ending loation is: ",gx,",",gy)
+        Parameters:
+        - robot_pose: Current robot pose in real-world coordinates (x, y).
+        - grid: 2D list representing the environment, with 0 for free space and 1 for obstacles.
+        - targets: List of tuples representing the target fruits' positions in real-world coordinates.
+        - stop_distance: The distance to stop from the goal.
+        - heuristic_function: Function to compute the heuristic value.
+        """
+        FIXED_GRID_SIZE = (30,30)
         
-    #--------------------------------------- Using AStar-------------------------------------#
-        grid_size = 0.20
+        for target in targets:
+            # Convert real-world coordinates to grid indices for the target
+            target_indices = operate.coordinates_to_indices(target[0], target[1], FIXED_GRID_SIZE)
+            
+            # Find the path to the target using A* pathfinding
+            path = astar_pathfinding_complete(grid, 
+                                            operate.coordinates_to_indices(robot_pose[0], robot_pose[1], FIXED_GRID_SIZE),
+                                            target_indices,
+                                            stop_distance,
+                                            FIXED_GRID_SIZE,
+                                            heuristic_function)
+            
+            # If a path is found, navigate through the waypoints
+            if path:
+                print(f"Path found to target {target}: {path}")
+                for waypoint in path:
+                    # Convert grid indices to real-world coordinates for the waypoint
+                    waypoint_coordinates = operate.indices_to_coordinates(waypoint[0], waypoint[1], FIXED_GRID_SIZE)
+                    
+                    # Drive the robot to the waypoint
+                    robot_pose = operate.drive_to_waypoint(waypoint_coordinates, robot_pose)
+            else:
+                print(f"No path found to target {target}")
+            print(f"Arrived at target {target}\n")
 
-        a_star = AStarPlanner(ox, oy, grid_size, robot_radius)
-        rx, ry = a_star.planning(sx, sy, gx, gy)
-    #--------------------------------------- Using AStar-------------------------------------#
-        return rx,ry
-    
-    def initialise_space(self,fruits_true_pos,aruco_true_pos,search_order):
-        ox,oy=[],[] # obstacle location
 
-        # to get the fruit idx based on the search list
-        for i in range(3):
-            if search_list[search_order] == fruits_list[i]:
-                search_idx = i
-        # define the obstacle location
-        for i in range(3):
-            if i == search_idx: # do not include the current fruit goal as obstacle
-                continue
-            ox.append(fruits_true_pos[i][0])
-            oy.append(fruits_true_pos[i][1])
-        for i in range(10):
-            ox.append(aruco_true_pos[i][0])
-            oy.append(aruco_true_pos[i][1])
-
-        print("Number of obstacle is : ",len(ox))
-        return ox,oy
-        '''
 # main loop
 if __name__ == "__main__":
     import argparse
@@ -803,37 +570,10 @@ if __name__ == "__main__":
             print('SLAM is running')
         else:
             print('SLAM is paused')
-            
     ###########################################
-    operate.ekf.taglist = np.array([1,2,3,4,5,6,7,8,9,10])
-    operate.ekf.markers = aruco_true_pos
-    
-    #*********************RRT Implementation**********************************************************
-    '''
-    ################Generate Paths####################
-    #paths = operate.generate_paths(fruits_true_pos, aruco_true_pos, search_list)
-    #print(f'--------------Final path is {paths}') 
-    ###########################################
-
-    ############Drive Robot######################
-    for path in paths:
-        #ignore the starting point (duplicates)
-        print(f"Current goal: {path[-1]}")
-        for i in range(1, len(path) - 1):
-            wp = path[i]
-            print(f'Current wp: {wp}')
-            robot_pose = operate.get_robot_pose()
-            print("Robot Pose:", robot_pose)
-            operate.drive_to_waypoint(wp, robot_pose)
-        
-        # Implement a delay of 2 seconds and update SLAM
-        print("Initiating the Delay of 2 seconds")
-        operate.motion_controller([0,0],0.0,2)
-    ###########################################
-    '''
-
 
     #***************************Astar Implementation*****************************************************
+    '''
     obstacles = []
     for x,y in fruits_true_pos:
         obstacles.append([x,y])
@@ -858,10 +598,7 @@ if __name__ == "__main__":
             # Mark the corresponding grid cell as an obstacle (e.g., set it to 1)
             #matrix[y_grid][x_grid] = 1
             return x_grid, y_grid
-    
-    def convert_to_world_space(x,y):
-        return x/(n_cells_x - 1) * width - width/2, y/(n_cells_y-1) * height - height/2
-  
+
     print("adding obstacles")
     for x,y in obstacles:
         x_grid, y_grid = convert_to_grid_space(x,y)
@@ -888,38 +625,44 @@ if __name__ == "__main__":
         finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
         path, runs = finder.find_path(start, end, grid)
         
+
+        #-----implement drive to point code----
+        
+        ######################################
+
+
+
         print('operations:', runs, 'path length:', len(path))
         print(grid.grid_str(path=path, start=start, end=end))
         start = grid.node(x_grid, y_grid)
         grid.cleanup()
-        
-        waypoints = []
-        for node in path:
-            x,y = convert_to_world_space(node.x, node.y)
-            waypoints.append((x,y))
-            
-        for wp in waypoints:
-            print(wp)
-        
-        for wp in waypoints:
-            robot_pose = operate.get_robot_pose()                    
-            operate.drive_to_waypoint([x,y], robot_pose)
-            print(f"robot pose:  {operate.get_robot_pose()}")
-
         '''
-        #-----implement drive to point code----
-        print("Entering fruits loop")
-        path_list = []
-        for i in range(len(fruits_true_pos)):
-            goal = fruits_true_pos[i]
-            
-            waypoint_x, waypoint_y = input("Enter waypoint (x,y): ").split(",")
-            waypoint = [float(waypoint_y), float(waypoint_x)]
-            
-            robot_pose = operate.drive_to_waypoint(waypoint, robot_pose, args)
-        ######################################
-        '''
+        
 
+    # Create a 30x30 grid initialized with zeros
+    grid = np.zeros((30, 30))
+
+    # Function to convert real-world coordinates to grid indices
+    def coordinates_to_grid_indices(x, y, grid_size=30, map_size=3):
+        grid_center = grid_size // 2
+        scale = grid_size / map_size
+        return int(grid_center + (y * scale)), int(grid_center + (x * scale))
+
+    # Example obstacle data (replace this with actual data)
+    obstacles = []
+    for x,y in fruits_true_pos:
+        obstacles.append([x,y])
+
+    for x,y in aruco_true_pos:
+        obstacles.append([x,y])
+
+    # Mark obstacles on the grid
+    for obstacle in obstacles:
+        x, y = coordinates_to_grid_indices(obstacle["x"], obstacle["y"])
+        grid[x, y] = 1
+
+    # Print the grid (optional)
+    print(grid)
 
 
 sys.exit()

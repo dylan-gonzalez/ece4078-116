@@ -114,8 +114,17 @@ for idx in range(len(search_list)):
     finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
     path, runs = finder.find_path(start, end, grid)
 
+    # Extracting the x, y coordinates from each GridNode object to create a list of waypoints
+    waypoints = [(node.x, node.y) for node in path]
+    
+    
+    
+    print(f"The waypoints are: {waypoints}")
+
+
     print('operations:', runs, 'path length:', len(path))
-    print(grid.grid_str(path=path, start=start, end=end))
+    #print(grid.grid_str(path=path, start=start, end=end))
+    print(path)
     start = grid.node(x_grid, y_grid)
     grid.cleanup()
 

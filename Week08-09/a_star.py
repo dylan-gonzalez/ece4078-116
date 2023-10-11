@@ -1,286 +1,85 @@
-"""
+import numpy as np
+from typing import List, Tuple
+from queue import PriorityQueue
 
-A* grid planning
+# A class to represent the nodes in the grid
+class Node:
+    def __init__(self, x, y, walkable):
+        self.x = x
+        self.y = y
+        self.walkable = walkable
+        self.parent = None
+        self.g = float('inf')  # The cost to get to this node
+        self.h = 0  # The heuristic estimate to the goal
+        self.f = 0  # The total cost (g + h)
 
-author: Atsushi Sakai(@Atsushi_twi)
-        Nikos Kanargias (nkana@tee.gr)
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
 
-See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
+    def __lt__(self, other):
+        return self.f < other.f
 
-"""
+# A function to generate the neighbors of a given node
+def get_neighbors(node, grid):
+    neighbors = []
+    for dx in [-1, 0, 1]:
+        for dy in [-1, 0, 1]:
+            x, y = node.x + dx, node.y + dy
+            if 0 <= x < len(grid) and 0 <= y < len(grid[0]) and (dx != 0 or dy != 0):
+                neighbors.append(grid[x][y])
+    return neighbors
 
-import math
+# The complete updated A* function
+def astar_pathfinding_complete(grid: List[List[int]], start_coords: Tuple[int, int], goal_coords: Tuple[int, int],
+                               stop_distance: float, grid_size: Tuple[int, int], heuristic_function) -> List[Tuple[int, int]]:
+    # Creating a 2D array of Node objects from the input grid
+    nodes = [[Node(x, y, cell == 0) for y, cell in enumerate(row)] for x, row in enumerate(grid)]
+    start_node = nodes[start_coords[0]][start_coords[1]]
+    goal_node = nodes[goal_coords[0]][goal_coords[1]]
 
-import matplotlib.pyplot as plt
+    # Creating the open list and closed list
+    open_list = PriorityQueue()
+    open_list.put((0, start_node))
+    closed_list = set()
 
-show_animation = True
+    # Setting the g-cost of the start node to 0
+    start_node.g = 0
+    start_node.h = heuristic_function(start_node.x, start_node.y, goal_node.x, goal_node.y)
+    start_node.f = start_node.h
 
+    while not open_list.empty():
+        # Getting the node with the lowest f-cost from the open list
+        current_node = open_list.get()[1]
 
-class AStarPlanner:
+        # Adding the current node to the closed list
+        closed_list.add(current_node)
 
-    def __init__(self, ox, oy, resolution, rr):
-        """
-        Initialize grid map for a star planning
+        # If we have reached the goal node, reconstruct the path and return it
+        if heuristic_function(current_node.x, current_node.y, goal_node.x, goal_node.y) < stop_distance:
+            path = []
+            while current_node is not None:
+                path.append((current_node.x, current_node.y))
+                current_node = current_node.parent
+            return path[::-1]  # Return the path in the correct order
 
-        ox: x position list of Obstacles [m]
-        oy: y position list of Obstacles [m]
-        resolution: grid resolution [m]
-        rr: robot radius[m]
-        """
+        # Generating the neighbors of the current node
+        neighbors = get_neighbors(current_node, nodes)
 
-        self.resolution = resolution
-        self.rr = rr
-        self.min_x, self.min_y = 0, 0
-        self.max_x, self.max_y = 0, 0
-        self.obstacle_map = None
-        self.x_width, self.y_width = 0, 0
-        self.motion = self.get_motion_model()
-        self.calc_obstacle_map(ox, oy)
+        for neighbor in neighbors:
+            # If the neighbor is not walkable or is in the closed list, skip it
+            if not neighbor.walkable or neighbor in closed_list:
+                continue
 
-    class Node:
-        def __init__(self, x, y, cost, parent_index):
-            self.x = x  # index of grid
-            self.y = y  # index of grid
-            self.cost = cost
-            self.parent_index = parent_index
+            # Calculating the new g-cost of the neighbor
+            new_g = current_node.g + heuristic_function(current_node.x, current_node.y, neighbor.x, neighbor.y)
 
-        def __str__(self):
-            return str(self.x) + "," + str(self.y) + "," + str(
-                self.cost) + "," + str(self.parent_index)
+            # If the new g-cost is lower than the neighbor's current g-cost, update it
+            if new_g < neighbor.g:
+                neighbor.g = new_g
+                neighbor.h = heuristic_function(neighbor.x, neighbor.y, goal_node.x, goal_node.y)
+                neighbor.f = neighbor.g + neighbor.h
+                neighbor.parent = current_node
+                open_list.put((neighbor.f, neighbor))
 
-    def planning(self, sx, sy, gx, gy):
-        """
-        A star path search
-
-        input:
-            s_x: start x position [m]
-            s_y: start y position [m]
-            gx: goal x position [m]
-            gy: goal y position [m]
-
-        output:
-            rx: x position list of the final path
-            ry: y position list of the final path
-        """
-
-        start_node = self.Node(self.calc_xy_index(sx, self.min_x),
-                               self.calc_xy_index(sy, self.min_y), 0.0, -1)
-        goal_node = self.Node(self.calc_xy_index(gx, self.min_x),
-                              self.calc_xy_index(gy, self.min_y), 0.0, -1)
-
-        open_set, closed_set = dict(), dict()
-        open_set[self.calc_grid_index(start_node)] = start_node
-
-        while 1:
-            if len(open_set) == 0:
-                print("Open set is empty..")
-                break
-
-            c_id = min(
-                open_set,
-                key=lambda o: open_set[o].cost + self.calc_heuristic(goal_node,
-                                                                     open_set[
-                                                                         o]))
-            current = open_set[c_id]
-
-            # show graph
-            if show_animation:  # pragma: no cover
-                plt.plot(self.calc_grid_position(current.x, self.min_x),
-                         self.calc_grid_position(current.y, self.min_y), "xc")
-                # for stopping simulation with the esc key.
-                plt.gcf().canvas.mpl_connect('key_release_event',
-                                             lambda event: [exit(
-                                                 0) if event.key == 'escape' else None])
-                if len(closed_set.keys()) % 10 == 0:
-                    plt.pause(0.001)
-
-            if current.x == goal_node.x and current.y == goal_node.y:
-                print("Find goal")
-                goal_node.parent_index = current.parent_index
-                goal_node.cost = current.cost
-                break
-
-            # Remove the item from the open set
-            del open_set[c_id]
-
-            # Add it to the closed set
-            closed_set[c_id] = current
-
-            # expand_grid search grid based on motion model
-            for i, _ in enumerate(self.motion):
-                node = self.Node(current.x + self.motion[i][0],
-                                 current.y + self.motion[i][1],
-                                 current.cost + self.motion[i][2], c_id)
-                n_id = self.calc_grid_index(node)
-
-                # If the node is not safe, do nothing
-                if not self.verify_node(node):
-                    continue
-
-                if n_id in closed_set:
-                    continue
-
-                if n_id not in open_set:
-                    open_set[n_id] = node  # discovered a new node
-                else:
-                    if open_set[n_id].cost > node.cost:
-                        # This path is the best until now. record it
-                        open_set[n_id] = node
-
-        rx, ry = self.calc_final_path(goal_node, closed_set)
-
-        return rx, ry
-
-    def calc_final_path(self, goal_node, closed_set):
-        # generate final course
-        rx, ry = [self.calc_grid_position(goal_node.x, self.min_x)], [
-            self.calc_grid_position(goal_node.y, self.min_y)]
-        parent_index = goal_node.parent_index
-        while parent_index != -1:
-            n = closed_set[parent_index]
-            rx.append(self.calc_grid_position(n.x, self.min_x))
-            ry.append(self.calc_grid_position(n.y, self.min_y))
-            parent_index = n.parent_index
-
-        return rx, ry
-
-    @staticmethod
-    def calc_heuristic(n1, n2):
-        w = 1.0  # weight of heuristic
-        d = w * math.hypot(n1.x - n2.x, n1.y - n2.y)
-        return d
-
-    def calc_grid_position(self, index, min_position):
-        """
-        calc grid position
-
-        :param index:
-        :param min_position:
-        :return:
-        """
-        pos = index * self.resolution + min_position
-        return pos
-
-    def calc_xy_index(self, position, min_pos):
-        return round((position - min_pos) / self.resolution)
-
-    def calc_grid_index(self, node):
-        return (node.y - self.min_y) * self.x_width + (node.x - self.min_x)
-
-    def verify_node(self, node):
-        px = self.calc_grid_position(node.x, self.min_x)
-        py = self.calc_grid_position(node.y, self.min_y)
-
-        if px < self.min_x:
-            return False
-        elif py < self.min_y:
-            return False
-        elif px >= self.max_x:
-            return False
-        elif py >= self.max_y:
-            return False
-
-        # collision check
-        if self.obstacle_map[node.x][node.y]:
-            return False
-
-        return True
-
-    def calc_obstacle_map(self, ox, oy):
-
-        # self.min_x = round(min(ox))
-        # self.min_y = round(min(oy))
-        # self.max_x = round(max(ox))
-        # self.max_y = round(max(oy))
-        self.min_x = -2.0
-        self.min_y = -2.0
-        self.max_x = 2.0
-        self.max_y = 2.0
-        print("min_x:", self.min_x)
-        print("min_y:", self.min_y)
-        print("max_x:", self.max_x)
-        print("max_y:", self.max_y)
-
-        self.x_width = round((self.max_x - self.min_x) / self.resolution)
-        self.y_width = round((self.max_y - self.min_y) / self.resolution)
-        print("x_width:", self.x_width)
-        print("y_width:", self.y_width)
-
-        # obstacle map generation
-        self.obstacle_map = [[False for _ in range(self.y_width)]
-                             for _ in range(self.x_width)]
-        for ix in range(self.x_width):
-            x = self.calc_grid_position(ix, self.min_x)
-            for iy in range(self.y_width):
-                y = self.calc_grid_position(iy, self.min_y)
-                for iox, ioy in zip(ox, oy):
-                    d = math.hypot(iox - x, ioy - y)
-                    if d <= self.rr:
-                        self.obstacle_map[ix][iy] = True
-                        break
-
-    @staticmethod
-    def get_motion_model():
-        # dx, dy, cost
-        motion = [[1, 0, 1],
-                  [0, 1, 1],
-                  [-1, 0, 1],
-                  [0, -1, 1],
-                  [-1, -1, math.sqrt(2)],
-                  [-1, 1, math.sqrt(2)],
-                  [1, -1, math.sqrt(2)],
-                  [1, 1, math.sqrt(2)]]
-
-        return motion
-
-
-def main():
-    print(__file__ + " start!!")
-
-    # start and goal position
-    sx = 10.0  # [m]
-    sy = 10.0  # [m]
-    gx = 50.0  # [m]
-    gy = 50.0  # [m]
-    grid_size = 2.0  # [m]
-    robot_radius = 1.0  # [m]
-
-    # set obstacle positions
-    ox, oy = [], []
-    for i in range(-10, 60):
-        ox.append(i)
-        oy.append(-10.0)
-    for i in range(-10, 60):
-        ox.append(60.0)
-        oy.append(i)
-    for i in range(-10, 61):
-        ox.append(i)
-        oy.append(60.0)
-    for i in range(-10, 61):
-        ox.append(-10.0)
-        oy.append(i)
-    for i in range(-10, 40):
-        ox.append(20.0)
-        oy.append(i)
-    for i in range(0, 40):
-        ox.append(40.0)
-        oy.append(60.0 - i)
-
-    if show_animation:  # pragma: no cover
-        plt.plot(ox, oy, ".k")
-        plt.plot(sx, sy, "og")
-        plt.plot(gx, gy, "xb")
-        plt.grid(True)
-        plt.axis("equal")
-
-    a_star = AStarPlanner(ox, oy, grid_size, robot_radius)
-    rx, ry = a_star.planning(sx, sy, gx, gy)
-
-    if show_animation:  # pragma: no cover
-        plt.plot(rx, ry, "-r")
-        plt.pause(0.001)
-        plt.show()
-
-
-if __name__ == '__main__':
-    main()
+    # If there is no path to the goal, return an empty list
+    return []
