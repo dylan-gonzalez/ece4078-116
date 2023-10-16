@@ -7,10 +7,12 @@ import cv2
 import numpy as np
 import math
 import json
-from typing import Tuple, List
+import copy
 
-
-
+#from RRT import *
+from rrt2 import *
+from Obstacle import *
+#from a_star import AStarPlanner
 # import utility functions
 sys.path.insert(0, "{}/util".format(os.getcwd()))
 from util.pibot import PenguinPi    # access the robot
@@ -26,12 +28,14 @@ from slam.ekf import EKF
 from slam.robot import Robot
 import slam.aruco_detector as aruco
 
-# A* components
+# import YOLO components 
+#from YOLO.detector import Detector
+
 from pathfinding.core.diagonal_movement import DiagonalMovement
 from pathfinding.core.grid import Grid
 from pathfinding.finder.a_star import AStarFinder
 
-from a_star import astar_pathfinding_complete
+
 
 class Operate:
     def __init__(self, args):
@@ -160,42 +164,55 @@ class Operate:
                                                     np.round(fruit_true_pos[i][0], 1),
                                                     np.round(fruit_true_pos[i][1], 1)))
             n_fruit += 1    
-     
     
     
-    
-    def drive_to_waypoint(self, waypoint, robot_pose):
+    def drive_to_waypoint(self, waypoint, robot_pose, is_final_waypoint):
         '''
             Function that implements the driving of the robot
         '''
-        
         # Read in baseline and scale parameters
         datadir = "calibration/param/"
         scale = np.loadtxt("{}scale.txt".format(datadir), delimiter=',')
-        
         # Read in the waypoint values
-        waypoint_x = waypoint[0]
-        waypoint_y = waypoint[1]
-        
+        waypoint_x, waypoint_y = waypoint   
         # Read in robot pose values
-        robot_pose_x = robot_pose[0]
-        robot_pose_y = robot_pose[1]
-        
+        robot_pose_x, robot_pose_y, robot_pose_theta = robot_pose
         # Wheel ticks in m/s
         wheel_ticks = 30
 
+        threshold = 0.3 if is_final_waypoint else 0.05
+
+        # Calculate the target angle and turn the robot
         target_angle = operate.turn_to_waypoint(waypoint, robot_pose)
+        # Ensure the robot is facing the waypoint before starting to drive
+        angle_threshold = 10
+        while abs(target_angle - robot_pose_theta) > angle_threshold:
+            robot_pose = operate.get_robot_pose()   # update robot pose
+            robot_pose_theta = robot_pose[2]
+            target_angle = operate.turn_to_waypoint(waypoint, robot_pose)
+            
+        # Now that the robot is facing the waypoint we can drive forwards
+        while True:
+            # Update robot pose
+            robot_pose = operate.get_robot_pose()
+            robot_pose_x, robot_pose_y = robot_pose[:2]
 
-        # Drive straight to waypoint
-        distance_to_waypoint = math.sqrt((waypoint_x - robot_pose_x)**2 + (waypoint_y - robot_pose_y)**2)
-        drive_time = abs(float((distance_to_waypoint) / (wheel_ticks*scale))) 
-
-        print("Driving for {:.2f} seconds".format(drive_time))
-        operate.motion_controller([1,0], wheel_ticks, drive_time)
-        print("Arrived at [{}, {}]".format(waypoint[1], waypoint[0]))
+            # Drive straight to waypoint
+            distance_to_waypoint = math.sqrt((waypoint_x - robot_pose_x)**2 + (waypoint_y - robot_pose_y)**2)
+            
+            # Check if the robot is close to the waypoint
+            if distance_to_waypoint < threshold:
+                print("Arrived at [{}, {}]".format(waypoint[1], waypoint[0]))
+                break
+            
+            # Drive straight to the waypoint
+            drive_time = abs(float((distance_to_waypoint) / (wheel_ticks*scale))) 
+            print("Driving for {:.2f} seconds".format(drive_time))
+            operate.motion_controller([1,0], wheel_ticks, drive_time)
         
         update_robot_pose = [waypoint[0], waypoint[1], target_angle]
         return update_robot_pose 
+
 
     def turn_to_waypoint(self, waypoint, robot_pose):
         '''
@@ -260,8 +277,11 @@ class Operate:
             operate.take_pic()
             drive_meas = measure.Drive(lv,rv,drive_time)
             operate.update_slam(drive_meas)
+            #operate.record_data()
+            #operate.save_image()
+            #operate.detect_target()
         
-    
+              
     # camera control
     def take_pic(self):
         self.img = self.pibot.get_image()
@@ -345,189 +365,38 @@ class Operate:
                 self.notification = f'No prediction in buffer, save ignored'
             self.command['save_inference'] = False
 
-    # paint the GUI            
-    def draw(self, canvas):
-        canvas.blit(self.bg, (0, 0))
-        text_colour = (220, 220, 220)
-        v_pad = 40
-        h_pad = 20
-
-        # paint SLAM outputs
-        ekf_view = self.ekf.draw_slam_state(res=(320, 480 + v_pad),
-                                            not_pause=self.ekf_on)
-        canvas.blit(ekf_view, (2 * h_pad + 320, v_pad))
-        robot_view = cv2.resize(self.aruco_img, (320, 240))
-        self.draw_pygame_window(canvas, robot_view,
-                                position=(h_pad, v_pad)
-                                )
-
-        # for target detector (M3)
-        detector_view = cv2.resize(self.yolo_vis, (320, 240), cv2.INTER_NEAREST)
-        self.draw_pygame_window(canvas, detector_view,
-                                position=(h_pad, 240 + 2 * v_pad)
-                                )
-
-        # canvas.blit(self.gui_mask, (0, 0))
-        self.put_caption(canvas, caption='SLAM', position=(2 * h_pad + 320, v_pad))
-        self.put_caption(canvas, caption='Detector',
-                         position=(h_pad, 240 + 2 * v_pad))
-        self.put_caption(canvas, caption='PiBot Cam', position=(h_pad, v_pad))
-
-        notifiation = TEXT_FONT.render(self.notification,
-                                       False, text_colour)
-        canvas.blit(notifiation, (h_pad + 10, 596))
-
-        time_remain = self.count_down - time.time() + self.start_time
-        if time_remain > 0:
-            time_remain = f'Count Down: {time_remain:03.0f}s'
-        elif int(time_remain) % 2 == 0:
-            time_remain = "Time Is Up !!!"
-        else:
-            time_remain = ""
-        count_down_surface = TEXT_FONT.render(time_remain, False, (50, 50, 50))
-        canvas.blit(count_down_surface, (2 * h_pad + 320 + 5, 530))
-        return canvas
-
-    @staticmethod
-    def draw_pygame_window(canvas, cv2_img, position):
-        cv2_img = np.rot90(cv2_img)
-        view = pygame.surfarray.make_surface(cv2_img)
-        view = pygame.transform.flip(view, True, False)
-        canvas.blit(view, position)
-
-    @staticmethod
-    def put_caption(canvas, caption, position, text_colour=(200, 200, 200)):
-        caption_surface = TITLE_FONT.render(caption,
-                                            False, text_colour)
-        canvas.blit(caption_surface, (position[0], position[1] - 25))
-
-    # keyboard teleoperation, replace with your M1 codes if preferred        
-    def update_keyboard(self):
-        for event in pygame.event.get():
-            # drive forward
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_UP:
-                self.command['motion'][0] = min(self.command['motion'][0] + 1, 1)
-            # drive backward
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_DOWN:
-                self.command['motion'][0] = max(self.command['motion'][0] - 1, -1)
-            # turn left
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
-                self.command['motion'][1] = min(self.command['motion'][1] + 1, 1)
-            # drive right
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_RIGHT:
-                self.command['motion'][1] = max(self.command['motion'][1] - 1, -1)
-            # stop
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                self.command['motion'] = [0, 0]
-            # save image
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_i:
-                self.command['save_image'] = True
-            # save SLAM map
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                self.command['output'] = True
-            # reset SLAM map
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                if self.double_reset_comfirm == 0:
-                    self.notification = 'Press again to confirm CLEAR MAP'
-                    self.double_reset_comfirm += 1
-                elif self.double_reset_comfirm == 1:
-                    self.notification = 'SLAM Map is cleared'
-                    self.double_reset_comfirm = 0
-                    self.ekf.reset()
-            # run SLAM
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
-                n_observed_markers = len(self.ekf.taglist)
-                if n_observed_markers == 0:
-                    if not self.ekf_on:
-                        self.notification = 'SLAM is running'
-                        self.ekf_on = True
-                    else:
-                        self.notification = '> 2 landmarks is required for pausing'
-                elif n_observed_markers < 3:
-                    self.notification = '> 2 landmarks is required for pausing'
-                else:
-                    if not self.ekf_on:
-                        self.request_recover_robot = True
-                    self.ekf_on = not self.ekf_on
-                    if self.ekf_on:
-                        self.notification = 'SLAM is running'
-                    else:
-                        self.notification = 'SLAM is paused'
-            # run object detector
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_p:
-                self.command['inference'] = True
-            # save object detection outputs
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_n:
-                self.command['save_inference'] = True
-            # quit
-            elif event.type == pygame.QUIT:
-                self.quit = True
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                self.quit = True
-        if self.quit:
-            pygame.quit()
-            sys.exit()
-
-    def indices_to_coordinates(x, y, grid_size, map_size=3):
-        """
-        Convert grid indices to real world coordinates.
-        The center of the grid is mapped to the origin (0,0) in real world coordinates.
-        """
-        grid_center = grid_size // 2  
-        scale = map_size / grid_size  
-        return (y - grid_center) * scale, (x - grid_center) * scale
-
-
-    def navigate_to_fruits_fixed_grid(robot_pose: Tuple[float, float], 
-                                    grid: List[List[int]], 
-                                    targets: List[Tuple[float, float]], 
-                                    stop_distance: float,
-                                    heuristic_function) -> None:
-        """
-        Navigate through multiple waypoints to reach target fruits using A* pathfinding.
-
-        Parameters:
-        - robot_pose: Current robot pose in real-world coordinates (x, y).
-        - grid: 2D list representing the environment, with 0 for free space and 1 for obstacles.
-        - targets: List of tuples representing the target fruits' positions in real-world coordinates.
-        - stop_distance: The distance to stop from the goal.
-        - heuristic_function: Function to compute the heuristic value.
-        """
-        FIXED_GRID_SIZE = (30,30)
+    def run_slam(self, aruco_true_pos):
+        operate.ekf.taglist = np.array([1,2,3,4,5,6,7,8,9,10])
+        operate.ekf.markers = aruco_true_pos
         
-        for target in targets:
-            # Convert real-world coordinates to grid indices for the target
-            target_indices = operate.coordinates_to_indices(target[0], target[1], FIXED_GRID_SIZE)
-            
-            # Find the path to the target using A* pathfinding
-            path = astar_pathfinding_complete(grid, 
-                                            operate.coordinates_to_indices(robot_pose[0], robot_pose[1], FIXED_GRID_SIZE),
-                                            target_indices,
-                                            stop_distance,
-                                            FIXED_GRID_SIZE,
-                                            heuristic_function)
-            
-            # If a path is found, navigate through the waypoints
-            if path:
-                print(f"Path found to target {target}: {path}")
-                for waypoint in path:
-                    # Convert grid indices to real-world coordinates for the waypoint
-                    waypoint_coordinates = operate.indices_to_coordinates(waypoint[0], waypoint[1], FIXED_GRID_SIZE)
-                    
-                    # Drive the robot to the waypoint
-                    robot_pose = operate.drive_to_waypoint(waypoint_coordinates, robot_pose)
+        ################Run SLAM####################
+        n_observed_markers = len(operate.ekf.taglist)
+        if n_observed_markers == 0:
+            if not operate.ekf_on:
+                print('SLAM is running')
+                operate.ekf_on = True
             else:
-                print(f"No path found to target {target}")
-            print(f"Arrived at target {target}\n")
-
-
+                print('> 2 landmarks is required for pausing')
+        elif n_observed_markers < 3:
+            print('> 2 landmarks is required for pausing')
+        else:
+            if not operate.ekf_on:
+                operate.request_recover_robot = True
+            operate.ekf_on = not operate.ekf_on
+            if operate.ekf_on:
+                print('SLAM is running')
+            else:
+                print('SLAM is paused')    
+        ###########################################
+        
+    
 # main loop
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser("Fruit searching")
     parser.add_argument("--ip", metavar='', type=str, default='192.168.50.1')
-    parser.add_argument("--map", type=str, default='M4_true_map_full.txt')
+    parser.add_argument("--map", type=str, default='true_map_full.txt')
     #parser.add_argument("--map", type=str, default='lab_out/targets.txt')
     
     parser.add_argument("--port", metavar='', type=int, default=8080)
@@ -551,29 +420,10 @@ if __name__ == "__main__":
     robot_pose =  np.array([0.0, 0.0, 0.0])
     waypoint = [0.0,0.0]
     
+    # Run Slam
+    operate.run_slam(aruco_true_pos)    
     
-    ################Run SLAM####################
-    n_observed_markers = len(operate.ekf.taglist)
-    if n_observed_markers == 0:
-        if not operate.ekf_on:
-            print('SLAM is running')
-            operate.ekf_on = True
-        else:
-            print('> 2 landmarks is required for pausing')
-    elif n_observed_markers < 3:
-        print('> 2 landmarks is required for pausing')
-    else:
-        if not operate.ekf_on:
-            operate.request_recover_robot = True
-        operate.ekf_on = not operate.ekf_on
-        if operate.ekf_on:
-            print('SLAM is running')
-        else:
-            print('SLAM is paused')
-    ###########################################
-
-    #***************************Astar Implementation*****************************************************
-    '''
+    # Add obstacles
     obstacles = []
     for x,y in fruits_true_pos:
         obstacles.append([x,y])
@@ -598,7 +448,10 @@ if __name__ == "__main__":
             # Mark the corresponding grid cell as an obstacle (e.g., set it to 1)
             #matrix[y_grid][x_grid] = 1
             return x_grid, y_grid
-
+    
+    def convert_to_world_space(x,y):
+        return x/(n_cells_x - 1) * width - width/2, y/(n_cells_y-1) * height - height/2
+  
     print("adding obstacles")
     for x,y in obstacles:
         x_grid, y_grid = convert_to_grid_space(x,y)
@@ -625,44 +478,35 @@ if __name__ == "__main__":
         finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
         path, runs = finder.find_path(start, end, grid)
         
-
-        #-----implement drive to point code----
-        
-        ######################################
-
-
-
         print('operations:', runs, 'path length:', len(path))
         print(grid.grid_str(path=path, start=start, end=end))
         start = grid.node(x_grid, y_grid)
         grid.cleanup()
-        '''
         
-
-    # Create a 30x30 grid initialized with zeros
-    grid = np.zeros((30, 30))
-
-    # Function to convert real-world coordinates to grid indices
-    def coordinates_to_grid_indices(x, y, grid_size=30, map_size=3):
-        grid_center = grid_size // 2
-        scale = grid_size / map_size
-        return int(grid_center + (y * scale)), int(grid_center + (x * scale))
-
-    # Example obstacle data (replace this with actual data)
-    obstacles = []
-    for x,y in fruits_true_pos:
-        obstacles.append([x,y])
-
-    for x,y in aruco_true_pos:
-        obstacles.append([x,y])
-
-    # Mark obstacles on the grid
-    for obstacle in obstacles:
-        x, y = coordinates_to_grid_indices(obstacle["x"], obstacle["y"])
-        grid[x, y] = 1
-
-    # Print the grid (optional)
-    print(grid)
+        waypoints = []
+        for node in path:
+            x,y = convert_to_world_space(node.x, node.y)
+            waypoints.append((x,y))
+            
+        for wp in waypoints:
+            print(wp)
+        
+        for wp in waypoints:
+            if wp == waypoints[-1]:
+                is_final_waypoint = 1
+            else: 
+             is_final_waypoint = 0
+                
+                
+            robot_pose = operate.get_robot_pose()                    
+            operate.drive_to_waypoint([x,y], robot_pose, is_final_waypoint)
+            print(f"robot pose:  {operate.get_robot_pose()}")
+            
+        # Implement a delay of 2 seconds and update SLAM
+        print("Initiating the Delay of 2 seconds") 
+        operate.motion_controller([0,0],0,2)
+        
+        #### WE NEED TO ADD A BUFFER AROUND THE OBSTACLE
 
 
 sys.exit()

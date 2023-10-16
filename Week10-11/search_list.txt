@@ -1,0 +1,4 @@
+capsicum
+pumpkin
+potato
+tomato
