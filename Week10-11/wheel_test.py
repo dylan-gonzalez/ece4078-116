@@ -21,7 +21,7 @@ class WheelTest:
 
         self.ppi = PenguinPi(args.ip,args.port)
 
-    def testDrive(self, ticks=20, dist=1):
+    def testDrive(self, ticks=30, dist=1):
         self.drive_setpoint.append(dist)
         dt = dist/(ticks*self.scale)
         print("driving for ", dt)
@@ -62,8 +62,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ip", metavar='', type=str, default='localhost')
-    parser.add_argument("--port", metavar='', type=int, default=40000)
+    parser.add_argument("--ip", metavar='', type=str, default='192.168.50.1')
+    parser.add_argument("--port", metavar='', type=int, default=8080)
     args, _ = parser.parse_known_args()
     
     w = WheelTest(args)

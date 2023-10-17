@@ -361,3 +361,6 @@ if __name__ == "__main__":
         # visualise
         operate.draw(canvas)
         pygame.display.update()
+
+
+# Always show markers that have low covariance when driving the robot 

@@ -175,7 +175,7 @@ class Operate:
         # Read in robot pose values
         robot_pose_x, robot_pose_y, robot_pose_theta = robot_pose
         # Wheel ticks in m/s
-        wheel_ticks = 30
+        wheel_ticks = 25
 
         threshold = 0.3 if is_final_waypoint else 0.05
 
@@ -230,7 +230,7 @@ class Operate:
         robot_pose_theta = robot_pose[2]
         
         # Wheel ticks in m/s
-        wheel_ticks = 30
+        turning_ticks = 10
 
         # Calculate turning varibles
         turn_time = 0
@@ -243,15 +243,15 @@ class Operate:
             theta_delta += 2 * math.pi
 
         # Evaluate how long the robot should turn for
-        turn_time = float((abs(theta_delta)*baseline)/(2*wheel_ticks*scale))
+        turn_time = float((abs(theta_delta)*baseline)/(2*turning_ticks*scale))
         print("Turning for {:.2f} seconds".format(turn_time))
         
         if theta_delta == 0:
             print("No turn")
         elif theta_delta > 0:
-            operate.motion_controller([0,1], wheel_ticks, turn_time)
+            operate.motion_controller([0,1], turning_ticks, turn_time)
         elif theta_delta < 0:
-            operate.motion_controller([0,-1], wheel_ticks, turn_time)
+            operate.motion_controller([0,-1], turning_ticks, turn_time)
         else:
             print("There is an issue with turning function")
             
@@ -272,7 +272,7 @@ class Operate:
             
             # Run SLAM Update Sequence
             operate.take_pic()
-            drive_meas = measure.Drive(lv,rv,drive_time)
+            drive_meas = measure.Drive(lv,-rv,drive_time)
             operate.update_slam(drive_meas)
             #operate.record_data()
             #operate.save_image()

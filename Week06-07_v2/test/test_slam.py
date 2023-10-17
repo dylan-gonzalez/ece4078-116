@@ -5,7 +5,7 @@ provided. There is no point in making your code pass this test and obtain worse 
 result!
 """
 
-from operate_slam import Operate
+from operate import Operate
 import pytest
 import logging
 import numpy as np
@@ -20,6 +20,7 @@ class fake_args:
         self.calib_dir = "calibration/param/"
         self.ip = "127.0.0.1"
         self.port = "40000"
+        self.yolo_model = ""
 logger = logging.getLogger(__name__)
 
 
