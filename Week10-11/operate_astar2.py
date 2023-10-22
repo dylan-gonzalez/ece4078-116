@@ -1,5 +1,6 @@
 # teleoperate the robot, perform SLAM and object detection
 
+# Basic python packages
 import os
 import sys
 import time
@@ -9,15 +10,12 @@ import math
 import json
 import copy
 
-#from a_star import AStarPlanner
 # import utility functions
 sys.path.insert(0, "{}/util".format(os.getcwd()))
 from util.pibot import PenguinPi    # access the robot
 import util.DatasetHandler as dh    # save/load functions
 import util.measure as measure      # measurements
-import pygame                       # python package for GUI
 import shutil                       # python package for file operations
-
 
 # import SLAM components you developed in M2
 sys.path.insert(0, "{}/slam".format(os.getcwd()))
@@ -32,6 +30,7 @@ from pathfinding.core.diagonal_movement import DiagonalMovement
 from pathfinding.core.grid import Grid
 from pathfinding.finder.a_star import AStarFinder
 
+from astar_class2 import AStar
 
 
 class Operate:
@@ -68,24 +67,53 @@ class Operate:
         self.pred_fname = ''
         self.request_recover_robot = False
         self.file_output = None
-        self.ekf_on =True # False
+        self.ekf_on = False # False
         self.double_reset_comfirm = 0
         self.image_id = 0
-        self.notification = 'Press ENTER to start SLAM'
         self.pred_notifier = False
         # a 5min timer
         self.count_down = 300
         self.start_time = time.time()
         self.control_clock = time.time()
-        # initialise images
-        self.img = np.zeros([240, 320, 3], dtype=np.uint8)
-        self.aruco_img = np.zeros([240, 320, 3], dtype=np.uint8)
-        #self.detector_output = np.zeros([240, 320], dtype=np.uint8)
+
+        # M5 Parameter Initialisation
+        self.robot_pose = [0.0,0.0,0.0]
+        self.waypoints = []
+        self.wp = [0,0]
+        #self.min_dist = 50 
+        self.taglist = []
+        self.paths = [[[0,0],[0.5,0.5]],[[0.5,0.5],[1,1]],[[1,1],[1,0.5]]]
+        self.path_idx = 0
+        self.distance_to_waypoint = 0
+        self.target_angle = 0
+        self.theta_delta = 0
+
+        #### Maybe add a 'is final waypoint' variable
+
+        # Wheel Control Parameters
+        self.drive_ticks = 30
+        self.turn_ticks = 10
+
+        # Add known aruco markers and fruits from map to SLAM
+        self.fruit_list, self.fruit_true_pos, self.aruco_true_pos = self.read_true_map(args.true_map)
+        self.search_list = self.read_search_list()
+        self.marker_pos= np.zeros((2,len(self.aruco_true_pos) + len(self.fruit_true_pos)))
+        self.marker_pos, self.taglist, self.P = self.parse_slam_map(self.fruit_list, self.fruit_true_pos, self.aruco_true_pos)
+        self.ekf.load_map(self.marker_pos, self.taglist, self.P)
+
+        #COUld initialise the path for path planning here. redesign the path planing function so that it outputs the path to self.paths
+        #self.astar_path()
+
+
 
     def get_robot_pose(self):
         states = self.ekf.get_state_vector()
-        #print(f"robot pose: {states}")
-        return states[0:3, :]
+        
+        robot_pose = [0.0,0.0,0.0]
+        robot_pose = states[0:3, :]
+        #print(f"robot pose: {robot_pose}")
+
+        return robot_pose
         
     def read_true_map(self, fname):
         """Read the ground truth map and output the pose of the ArUco markers and 5 target fruits&vegs to search for
@@ -123,8 +151,6 @@ class Operate:
                         fruit_true_pos = np.append(fruit_true_pos, [[x, y]], axis=0)
                         
                     #print(f'fruit: {fruit_list[-1]} at {fruit_true_pos}')
-
-            #return (1), (2), (3)
             return fruit_list, fruit_true_pos, aruco_true_pos
 
 
@@ -171,44 +197,44 @@ class Operate:
         datadir = "calibration/param/"
         scale = np.loadtxt("{}scale.txt".format(datadir), delimiter=',')
         # Read in the waypoint values
-        waypoint_x, waypoint_y = waypoint   
+        waypoint_x = self.wp[0]
+        waypoint_y = self.wp[1]  
         # Read in robot pose values
-        robot_pose_x, robot_pose_y, robot_pose_theta = robot_pose
-        # Wheel ticks in m/s
-        wheel_ticks = 25
+        robot_pose_x = self.robot_pose[0]
+        robot_pose_y, = self.robot_pose[1]
+        robot_pose_theta = self.robot_pose[2]
 
         threshold = 0.3 if is_final_waypoint else 0.05
 
         # Calculate the target angle and turn the robot
-        target_angle = operate.turn_to_waypoint(waypoint, robot_pose)
+        operate.turn_to_waypoint(waypoint, robot_pose)
         # Ensure the robot is facing the waypoint before starting to drive
-        angle_threshold = 10
-        '''
-        while abs(target_angle - robot_pose_theta) > angle_threshold:
-            robot_pose = operate.get_robot_pose()   # update robot pose
+        angle_threshold = 5
+        while abs(self.target_angle - robot_pose_theta) > angle_threshold:
+            self.robot_pose = operate.get_robot_pose()   # update robot pose
             robot_pose_theta = robot_pose[2]
-            target_angle = operate.turn_to_waypoint(waypoint, robot_pose)
-        '''
+            operate.turn_to_waypoint(waypoint, robot_pose)
+            
         # Now that the robot is facing the waypoint we can drive forwards
-        #while True:
-        # Update robot pose
-        robot_pose = operate.get_robot_pose()
-        robot_pose_x, robot_pose_y = robot_pose[:2]
+        while True:
+            # Update robot pose
+            robot_pose = operate.get_robot_pose()
+            robot_pose_x, robot_pose_y = self.robot_pose[:2]
 
-        # Drive straight to waypoint
-        distance_to_waypoint = math.sqrt((waypoint_x - robot_pose_x)**2 + (waypoint_y - robot_pose_y)**2)
-        '''
-        # Check if the robot is close to the waypoint
-        if distance_to_waypoint < threshold:
-            print("Arrived at [{}, {}]".format(waypoint[1], waypoint[0]))
-            break
-        '''
-        # Drive straight to the waypoint
-        drive_time = abs(float((distance_to_waypoint) / (wheel_ticks*scale))) 
-        print("Driving for {:.2f} seconds".format(drive_time))
-        operate.motion_controller([1,0], wheel_ticks, drive_time)
-    
-        update_robot_pose = [waypoint[0], waypoint[1], target_angle]
+            # Drive straight to waypoint
+            self.distance_to_waypoint = math.sqrt((waypoint_x - robot_pose_x)**2 + (waypoint_y - robot_pose_y)**2)
+            
+            # Check if the robot is close to the waypoint
+            if self.distance_to_waypoint < threshold:
+                print("Arrived at [{}, {}]".format(waypoint[1], waypoint[0]))
+                break
+            
+            # Drive straight to the waypoint
+            drive_time = abs(float((self.distance_to_waypoint) / (self.drive_ticks*scale))) 
+            print("Driving for {:.2f} seconds".format(drive_time))
+            operate.motion_controller([1,0], self.drive_ticks, drive_time)
+        
+        update_robot_pose = [waypoint[0], waypoint[1], self.target_angle]
         return update_robot_pose 
 
 
@@ -222,41 +248,37 @@ class Operate:
         baseline = np.loadtxt("{}baseline.txt".format(datadir), delimiter=',')
 
         # Read in the waypoint values
-        waypoint_x = waypoint[0]
-        waypoint_y = waypoint[1]
-        
+        waypoint_x = self.wp[0]
+        waypoint_y = self.wp[1]  
         # Read in robot pose values
-        robot_pose_x = robot_pose[0]
-        robot_pose_y = robot_pose[1]
-        robot_pose_theta = robot_pose[2]
-        
-        # Wheel ticks in m/s
-        turning_ticks = 10
+        robot_pose_x = self.robot_pose[0]
+        robot_pose_y, = self.robot_pose[1]
+        robot_pose_theta = self.robot_pose[2]
 
         # Calculate turning varibles
         turn_time = 0
-        theta_target = math.atan2(waypoint_y - robot_pose_y, waypoint_x - robot_pose_x) # angle from robot's current position to the target waypoint
-        theta_delta = theta_target - robot_pose_theta # How far the robot must turn from current pose
+        self.target_angle = math.atan2(waypoint_y - robot_pose_y, waypoint_x - robot_pose_x) # angle from robot's current position to the target waypoint
+        self.theta_delta = self.target_angle - robot_pose_theta # How far the robot must turn from current pose
         
-        if theta_delta > math.pi:
-            theta_delta -= 2 * math.pi
-        elif theta_delta < -math.pi:
-            theta_delta += 2 * math.pi
+        if self.theta_delta > math.pi:
+            self.theta_delta -= 2 * math.pi
+        elif self.theta_delta < -math.pi:
+            self.theta_delta += 2 * math.pi
 
         # Evaluate how long the robot should turn for
-        turn_time = float((abs(theta_delta)*baseline)/(2*turning_ticks*scale))
+        turn_time = float((abs(self.theta_delta)*baseline)/(2*self.turn_ticks*scale))
         print("Turning for {:.2f} seconds".format(turn_time))
         
-        if theta_delta == 0:
+        if self.theta_delta == 0:
             print("No turn")
-        elif theta_delta > 0:
-            operate.motion_controller([0,1], turning_ticks, turn_time)
-        elif theta_delta < 0:
-            operate.motion_controller([0,-1], turning_ticks, turn_time)
+        elif self.theta_delta > 0:
+            operate.motion_controller([0,1], self.turn_ticks, turn_time)
+        elif self.theta_delta < 0:
+            operate.motion_controller([0,-1], self.turn_ticks, turn_time)
         else:
             print("There is an issue with turning function")
             
-        return theta_delta # delete once we get the robot_pose working and path plannning
+        return self.theta_delta # delete once we get the robot_pose working and path plannning
         
         
         
@@ -278,8 +300,53 @@ class Operate:
             #operate.record_data()
             #operate.save_image()
             #operate.detect_target()
+    
+    def generate_path(self):
+        # Load the true map and search list
+        with open('M4_true_map_full.txt', 'r') as file:
+            true_map_content = file.readlines()
+
+        search_list = np.loadtxt('search_list.txt', dtype=str)
+
+        # Parse the true map content to extract labels and coordinates
+        parsed_true_map = json.loads(true_map_content[0])
+
+        # Extract coordinates of the items specified in the search list from the parsed true map
+        target_coordinates_from_true_map = {label: coords for label, coords in parsed_true_map.items() 
+                                            if label.split('_')[0] in search_list}
         
-              
+        # Convert target coordinates to grid indices and define the start position at the center of the map
+        map_size = 3.0  # The size of the map in meters
+        grid_size = 0.05  # The size of each grid cell in meters
+        buffer_distance = 0.3  # The distance to get within each target in meters
+        buffer_cells = int(buffer_distance / grid_size)  # The number of cells equivalent to the buffer distance
+
+        target_coordinates_indices = [(int((coord['x'] + map_size / 2) / grid_size), 
+                                    int((coord['y'] + map_size / 2) / grid_size)) 
+                                    for coord in target_coordinates_from_true_map.values()]
+
+        start = (int(map_size / (2 * grid_size)), int(map_size / (2 * grid_size)))
+        
+        # Creating an instance of the AStar class with the provided occupancy grid
+        astar = AStar(buffered_occupancy_grid)
+
+        # Assuming buffered_occupancy_grid is defined, replace this with the actual occupancy grid
+        example_occupancy_grid = astar.create_occupancy_grid(true_map_content, grid_size, map_size)
+
+        # Create a buffered occupancy grid by expanding obstacles
+        buffer_distance = 0.3  # The distance to get within each target in meters
+        buffer_cells = int(buffer_distance / grid_size)
+        buffered_occupancy_grid = astar.buffer_obstacles(example_occupancy_grid, buffer_cells)
+
+
+        # Compute paths using the enhanced A* with obstacle avoidance for each target
+        paths = []
+        for target in target_coordinates_indices:
+            path = astar.a_star_with_obstacle_avoidance(start, target, buffer_cells)
+            paths.append(path)
+            if path:
+                start = path[-1]  # Update the start for the next target
+                
     # camera control
     def take_pic(self):
         self.img = self.pibot.get_image()
@@ -405,8 +472,6 @@ if __name__ == "__main__":
 
     ppi = PenguinPi(args.ip,args.port)
     operate = Operate(args)
-    
-    
 
     # read in the true map
     fruits_list, fruits_true_pos, aruco_true_pos = operate.read_true_map(args.map) #list of fruits names, locations of fruits, locations of aruco markers
@@ -421,7 +486,7 @@ if __name__ == "__main__":
     waypoint = [0.0,0.0]
     
     # Run Slam
-    operate.run_slam(aruco_true_pos)  
+    operate.run_slam(aruco_true_pos)    
     
     # Add obstacles
     obstacles = []
@@ -436,8 +501,8 @@ if __name__ == "__main__":
     #Generate occupancy grid
     width = 3 #m
     height = 3 #m
-    n_cells_y = 30
-    n_cells_x = 30
+    n_cells_y = 20
+    n_cells_x = 20
     matrix = [[1 for _ in range(n_cells_y)] for _ in range(n_cells_x)] #preallocate
 
     def convert_to_grid_space(x,y):
@@ -469,7 +534,7 @@ if __name__ == "__main__":
 
     start_x, start_y = convert_to_grid_space(0,0)
     start = grid.node(start_x, start_y)
-    operate.ekf_on = True
+    
     search_list = operate.read_search_list()
     for idx in range(len(search_list)):
         print(f'Going to fruit {search_list[idx]}')

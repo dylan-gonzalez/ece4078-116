@@ -1,4 +1,2 @@
-capsicum
-pumpkin
-potato
 tomato
+capsicum

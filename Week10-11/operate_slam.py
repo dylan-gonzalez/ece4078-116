@@ -18,7 +18,7 @@ import shutil                       # python package for file operations
 sys.path.insert(0, "{}/slam".format(os.getcwd()))
 from slam.ekf import EKF
 from slam.robot import Robot
-import slam.aruco_detector as aruco
+import slam.aruco_detector as aruco ###CHANGED TO OLD
 
 # import YOLO components 
 from YOLO.detector import Detector
