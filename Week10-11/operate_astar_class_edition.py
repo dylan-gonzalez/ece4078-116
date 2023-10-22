@@ -10,6 +10,7 @@ import math
 import json
 import copy
 import time
+from typing import List, Tuple
 
 # import utility functions
 sys.path.insert(0, "{}/util".format(os.getcwd()))
@@ -92,7 +93,7 @@ class Operate:
         self.turn_time = 0
 
         # Wheel Control Parameters
-        self.drive_ticks = 30
+        self.drive_ticks = 25
         self.turn_ticks = 10
 
         # Add known aruco markers and fruits from map to SLAM
@@ -238,16 +239,102 @@ class Operate:
 
         return waypoints
     
+    def ramer_douglas_peucker(self,points: List[Tuple[float, float]], epsilon: float) -> List[Tuple[float, float]]:
+        """
+        Ramer-Douglas-Peucker algorithm for path smoothing.
+        
+        Parameters:
+        - points: A list of tuples representing the waypoints (x, y).
+        - epsilon: The maximum distance from a point to a line formed by two other points.
+        
+        Returns:
+        - A reduced list of tuples representing the smoothed path.
+        """
+        # Find the point with the maximum distance from the line formed by the start and end points
+        start_point, end_point = points[0], points[-1]
+        max_distance = 0.0
+        index = 0
+        for i in range(1, len(points) - 1):
+            distance = np.abs(np.cross(np.array(end_point) - np.array(start_point), 
+                                    np.array(start_point) - np.array(points[i]))) / np.linalg.norm(np.array(end_point) - np.array(start_point))
+            if distance > max_distance:
+                index = i
+                max_distance = distance
+        
+        # If the max distance is greater than epsilon, recursively apply the algorithm to the two subarrays
+        if max_distance > epsilon:
+            left_result = self.ramer_douglas_peucker(points[:index+1], epsilon)
+            right_result = self.ramer_douglas_peucker(points[index:], epsilon)
+            return left_result[:-1] + right_result
+        
+        return [start_point, end_point]
+
+    # Function to ensure that the distance between two consecutive waypoints is not more than a specified maximum distance
+    def ensure_max_distance(self,points: List[Tuple[float, float]], max_distance: float) -> List[Tuple[float, float]]:
+        """
+        Ensure the distance between two consecutive waypoints is not more than the specified max_distance.
+        
+        Parameters:
+        - points: A list of tuples representing the waypoints (x, y).
+        - max_distance: The maximum allowed distance between two consecutive waypoints.
+        
+        Returns:
+        - A list of tuples representing the waypoints satisfying the max_distance condition.
+        """
+        smoothed_points = [points[0]]
+        for i in range(1, len(points)):
+            distance = np.linalg.norm(np.array(points[i]) - np.array(smoothed_points[-1]))
+            if distance > max_distance:
+                # Calculate the number of intermediate points needed
+                num_intermediate_points = int(np.ceil(distance / max_distance)) - 1
+                
+                # Calculate the vector from the current point to the next point
+                vector = np.array(points[i]) - np.array(smoothed_points[-1])
+                
+                # Normalize the vector and scale it to the max_distance
+                vector = (vector / np.linalg.norm(vector)) * max_distance
+                
+                # Add the intermediate points
+                for j in range(num_intermediate_points):
+                    intermediate_point = np.array(smoothed_points[-1]) + vector
+                    smoothed_points.append(tuple(intermediate_point))
+            
+            smoothed_points.append(points[i])
+        
+        return smoothed_points
+    
+    def control(self):
+        if args.play_data:
+            lv, rv = self.pibot.set_velocity()
+        else:
+            lv, rv = self.pibot.set_velocity(
+                self.command['motion'])
+        if self.data is not None:
+            self.data.write_keyboard(lv, rv)
+        dt = time.time() - self.control_clock
+        # running in sim
+        if args.ip == 'localhost':
+            drive_meas = measure.Drive(lv, rv, dt)
+        # running on physical robot (right wheel reversed)
+        else:
+            drive_meas = measure.Drive(lv, -rv, dt)
+        self.control_clock = time.time()
+        return drive_meas
+    
     def drive_to_waypoint(self):
         '''
             Function that implements the driving of the robot
         '''    
+        self.robot_pose = self.get_robot_pose()
+        
         self.drive_time = 0
         self.distance_to_waypoint = math.sqrt((self.wp[0] - self.robot_pose[0])**2 + (self.wp[1] - self.robot_pose[1])**2)
         self.drive_time = abs(float((self.distance_to_waypoint) / (self.drive_ticks*self.scale))) 
         print("#--------------------------------------------------------------------#")
-        print("Driving for {:.2f} seconds".format(self.drive_time))
-        self.motion_controller([1,0], self.drive_ticks, self.drive_time)
+        print("Driving for {:.2f} seconds and distance to waypoint is: {}".format(self.drive_time, self.distance_to_waypoint))
+        #self.motion_controller([1,0], self.drive_ticks, self.drive_time)
+        motion = [1,0]
+        operate.drive_bot(motion, self.drive_time)
         print("Arrived at pose: [{}], Target waypoint is: [{}]".format(self.get_robot_pose(),self.wp))
         print("#--------------------------------------------------------------------#") 
 
@@ -273,17 +360,31 @@ class Operate:
         if self.theta_delta == 0:
             print("No turn")
         elif self.theta_delta > 0:
-            self.motion_controller([0,1], self.turn_ticks, self.turn_time)
+            #self.motion_controller([0,1], self.turn_ticks, self.turn_time)
+            #self.command['motion'] = [0, 1]
+            motion = [0, 1]
+            operate.drive_bot(motion, self.turn_time)
         elif self.theta_delta < 0:
-            self.motion_controller([0,-1], self.turn_ticks, self.turn_time)
+            #self.motion_controller([0,-1], self.turn_ticks, self.turn_time)
+            #self.command['motion'] = [0, -1]
+            motion = [0, -1]
+            operate.drive_bot(motion, self.turn_time)
         else:
             print("There is an issue with turning function")
+        '''
+        operate.control_clock=time.time()
+        self.turn_time += time.time()
+        while time.time()<=self.turn_time:
+            drive_meas = self.control()
+            self.update_slam(drive_meas)
+        '''
             
         print("Reached angle pose: [{}], Taget angle pose is: [{}]".format(self.get_robot_pose()[2], self.target_angle))
         
-        
+      
     #TODO: IF the distance_to_waypoint is negative i want to reverse    
     def motion_controller(self, motion, wheel_ticks, drive_time):
+        
         lv,rv = 0.0, 0.0 
               
         lv, rv = self.pibot.set_velocity(motion, tick=wheel_ticks, time=drive_time)
@@ -293,6 +394,17 @@ class Operate:
         drive_meas = measure.Drive(lv,-rv,drive_time)
         self.update_slam(drive_meas)
         #time.sleep(0.2)
+        
+    def drive_bot(self,motion, drive_time):
+        self.command['motion'] = motion
+        self.take_pic()
+        #Turn
+        operate.control_clock=time.time()
+        drive_time += time.time()
+        while time.time()<=drive_time:
+            drive_meas = self.control()
+            self.update_slam(drive_meas)
+        
         
     # camera control
     def take_pic(self):
@@ -375,10 +487,18 @@ if __name__ == "__main__":
     print("n_observed_markers:",operate.ekf.taglist)
     ######################################################
     
-    operate.motion_controller([0,0], 0.0, 0.0) #TODO: Might not even need this if i rotate
+    #operate.motion_controller([0,0], 0.0, 0.0) #TODO: Might not even need this if i rotate
     
     # Rotate 360 degrees
     #operate.motion_controller([0,1],30,17) ###THE TIME WILL BE WRONG SHOULD BE 360 degrees
+    time.sleep(1)
+    
+    operate.drive_bot([0,0],2)
+    operate.drive_bot([0,1],2)
+    operate.drive_bot([0,-1],4)
+    operate.drive_bot([0,1],2)
+    
+    
     
     operate.robot_pose = operate.get_robot_pose()
     
@@ -387,39 +507,42 @@ if __name__ == "__main__":
         operate.search_idx = idx 
         print("Search index is: {} and target fruit is: {}".format(operate.search_idx,operate.search_list[operate.search_idx]))
         # Path planning
-        operate.path = operate.path_planning()
+        path_long = operate.path_planning()
+        epsilon = 0.05  # This is the maximum distance a point can be from the line segment connecting two other points
+        reduced_points = operate.ramer_douglas_peucker(path_long, epsilon)
+
+        # Ensuring that the maximum distance between any two consecutive waypoints is not more than 0.4 units
+        smoothed_points = operate.ensure_max_distance(reduced_points, max_distance=0.4)
+
+        operate.path = smoothed_points
         
         for wp in operate.path:
             operate.wp = wp 
             
             operate.robot_pose = operate.get_robot_pose()
             
-            # add a while loop that has thresholding to use robot_pose to corrects its postion
-            dist_error = float(math.sqrt((operate.wp[0] - operate.robot_pose[0])**2 + (operate.wp[1] - operate.robot_pose[1])**2))
             angle_error = float(math.atan2(operate.wp[1] - operate.robot_pose[1], operate.wp[0] - operate.robot_pose[0]) - operate.robot_pose[2])
-            print("dist error: {}, angle error: {}".format(dist_error, angle_error))
-
-            while abs(dist_error) > 0.3 or abs(angle_error) > 5:       
-                if abs(dist_error) > 0.3 or abs(angle_error) > 4:
-                    print("Threshold start!!")                
-                print("IN THE WHILE LOOP+++++++++++++++++++++++++++++++++++++++++++++++++++++")
-                print("\n\n##################################################")
-                print("TARGET waypoint is: {} *******".format(operate.wp))
-                # get robot pose
-                operate.robot_pose = operate.get_robot_pose()
-            
+            dist_error = math.sqrt((operate.wp[0] - operate.robot_pose[0])**2 + (operate.wp[1] - operate.robot_pose[1])**2)   
+            # add another loop to ensure that we are at out target pose
+            #while abs(dist_error) > 0.3 or abs(angle_error) > 5:
+                #while abs(dist_error) > 0.3 or abs(angle_error) > 5: 
+            operate.robot_pose = operate.get_robot_pose()
+            angle_error = float(math.atan2(operate.wp[1] - operate.robot_pose[1], operate.wp[0] - operate.robot_pose[0]) - operate.robot_pose[2])
+                
                 # turn to waypoint
-                operate.turn_to_waypoint()
-                operate.robot_pose = operate.get_robot_pose()
+            #    while abs(angle_error) > 4:
+            operate.turn_to_waypoint()
+            operate.robot_pose = operate.get_robot_pose()   
+            angle_error = float(math.atan2(operate.wp[1] - operate.robot_pose[1], operate.wp[0] - operate.robot_pose[0]) - operate.robot_pose[2])
+                                    
+                # drive to point  
+            dist_error = math.sqrt((operate.wp[0] - operate.robot_pose[0])**2 + (operate.wp[1] - operate.robot_pose[1])**2)
+                #if dist_error > 0.2:
+            operate.drive_to_waypoint()
+            operate.robot_pose = operate.get_robot_pose()
                 
-                # drive to waypoint
-                operate.drive_to_waypoint()
-                operate.robot_pose = operate.get_robot_pose()
-                print("##################################################")
-                
-                dist_error = math.sqrt((operate.wp[0] - operate.robot_pose[0])**2 + (operate.wp[1] - operate.robot_pose[1])**2)
-                angle_error = operate.target_angle - operate.get_robot_pose()[2]
-            
+            print("##################################################")
+        
             
         print("##########################################################")
         print("Arrive at target fruit {}".format(operate.search_list[operate.search_idx]))

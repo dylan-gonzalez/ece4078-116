@@ -1,5 +1,6 @@
 #from astar_class3 import AStar
-from astar_class4 import CompleteImprovedAStar
+#from astar_class4 import CompleteImprovedAStar
+from astar_class5 import FinalAStar
 import numpy as np
 import json
 '''
@@ -85,7 +86,7 @@ print(all_waypoints)  # Display the waypoints for each target
 
 ## FOR ASTAR_CLASS_4
 def get_path_to_first_fruit(true_map_file='true_map_full.txt', search_list_file='search_list.txt', start_point=(0,0)):
-    astar = CompleteImprovedAStar(true_map_file, search_list_file)
+    astar = FinalAStar(true_map_file, search_list_file)
     target_name = astar.targets[0] if astar.targets else None #could create a search index 
     #self input so that it reads the last waypoint of the previous path as the new starting point 
     
