@@ -491,13 +491,13 @@ if __name__ == "__main__":
     
     # Rotate 360 degrees
     #operate.motion_controller([0,1],30,17) ###THE TIME WILL BE WRONG SHOULD BE 360 degrees
-    time.sleep(1)
+    time.sleep(0.5)
     
     operate.drive_bot([0,0],2)
     operate.drive_bot([0,1],2)
     operate.drive_bot([0,-1],4)
     operate.drive_bot([0,1],2)
-    
+    time.sleep(1)
     
     
     operate.robot_pose = operate.get_robot_pose()

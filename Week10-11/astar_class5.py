@@ -4,7 +4,7 @@ import json
 from queue import PriorityQueue
 
 class FinalAStar:
-    def __init__(self, true_map_file, search_list_file, grid_size=0.05, obstacle_size=0.2, boundary_size=3):
+    def __init__(self, true_map_file, search_list_file, grid_size=0.1, obstacle_size=0.2, boundary_size=3):
         self.true_map_file = true_map_file
         self.search_list_file = search_list_file
         self.grid_size = grid_size
